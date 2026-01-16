@@ -1,8 +1,40 @@
-import React, { useState, useEffect } from 'react';
+const loadUserData = async () => {
+    if (page === 'dashboard' || page === 'sessions') {
+      try {
+        const sessionsSnap = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', user.uid)));
+        setSessions(sessionsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        
+        const usersSnap = await getDocs(collection(db, 'users'));
+        setAllUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled));
+      } catch (error) {
+        // Silently handle error - permissions issue
+        setAllUsers([]);
+      }
+    }
+    if (page === 'admin') {
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        const usersWithStats = await Promise.all(users.map(async (u) => {
+          const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', u.id)));
+          return {
+            ...u,
+            totalSessions: userSessions.docs.length,
+            completedSessions: userSessions.docs.filter(s => s.data().status === 'completed').length
+          };
+        }));
+        
+        setAdminUsers(usersWithStats);
+      } catch (error) {
+        setAdminUsers([]);
+      }
+    }
+  };import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy, Timestamp } from 'firebase/firestore';
-import { Calendar, User, Award, MessageCircle, Users, Shield, LogOut, Search, Star, Clock, CheckCircle, Home, Zap, Sparkles, Trophy, Target, Plus, Send, X, Trash2, UserX, UserCheck, ChevronDown, Bell } from 'lucide-react';
+import { Calendar, User, Award, MessageCircle, Users, Shield, LogOut, Search, Star, Clock, CheckCircle, Home, Zap, Sparkles, Trophy, Target, Plus, Send, X, Trash2, UserX, UserCheck, ChevronDown } from 'lucide-react';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAhPSxvy-XQMcZp9BZQ1vmjJE-sFsTCHdA",
@@ -53,9 +85,9 @@ export default function SkillSwap() {
   const [adminUsers, setAdminUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [adminSearchTerm, setAdminSearchTerm] = useState('');
+  const [selectedAdminUser, setSelectedAdminUser] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [userRatings, setUserRatings] = useState([]);
   const [settings, setSettings] = useState({
     emailNotifications: true,
     sessionReminders: true,
@@ -71,6 +103,7 @@ export default function SkillSwap() {
           const profile = profileDoc.data();
           setUserProfile(profile);
           
+          // Check if user is disabled
           if (profile.disabled) {
             alert('⛔ Your account has been disabled by an administrator.');
             await signOut(auth);
@@ -80,7 +113,6 @@ export default function SkillSwap() {
           setBio(profile.bio || '');
           setOfferedSkills(profile.offeredSkills || []);
           setSoughtSkills(profile.soughtSkills || []);
-          setSettings(profile.settings || settings);
           setPage(profile.role === 'admin' ? 'admin' : 'dashboard');
         }
       } else {
@@ -99,13 +131,14 @@ export default function SkillSwap() {
     if (user && (page === 'dashboard' || page === 'sessions' || page === 'notifications')) {
       loadNotifications();
     }
-  }, [user, page, sessions]);
+  }, [user, page, sessions, messages]);
 
   const loadNotifications = async () => {
     if (!user) return;
     
     const notifs = [];
     
+    // Check for new session requests
     const pendingSessions = sessions.filter(s => 
       s.status === 'pending' && s.providerId === user.uid
     );
@@ -121,8 +154,9 @@ export default function SkillSwap() {
       });
     });
     
+    // Check for accepted sessions
     const acceptedSessions = sessions.filter(s => 
-      s.status === 'accepted' && s.requesterId === user.uid && !s.notificationViewed
+      s.status === 'accepted' && s.requesterId === user.uid
     );
     acceptedSessions.forEach(s => {
       notifs.push({
@@ -136,40 +170,35 @@ export default function SkillSwap() {
       });
     });
     
+    // Check for new messages
     const userSessions = sessions.filter(s => s.status === 'accepted');
     for (const session of userSessions) {
-      try {
-        const messagesSnap = await getDocs(
-          query(
-            collection(db, 'messages'), 
-            where('sessionId', '==', session.id),
-            orderBy('createdAt', 'desc')
-          )
-        );
-        
-        const unreadMessages = messagesSnap.docs.filter(doc => {
-          const msg = doc.data();
-          return msg.fromUserId !== user.uid;
+      const messagesSnap = await getDocs(
+        query(
+          collection(db, 'messages'), 
+          where('sessionId', '==', session.id),
+          where('fromUserId', '!=', user.uid),
+          orderBy('fromUserId'),
+          orderBy('createdAt', 'desc')
+        )
+      );
+      
+      if (messagesSnap.docs.length > 0) {
+        const lastMsg = messagesSnap.docs[0].data();
+        notifs.push({
+          id: `msg-${session.id}`,
+          type: 'new_message',
+          title: 'New Message',
+          message: `${lastMsg.fromName}: ${lastMsg.body.substring(0, 50)}...`,
+          time: lastMsg.createdAt,
+          link: 'chat',
+          sessionId: session.id,
+          session: session
         });
-        
-        if (unreadMessages.length > 0) {
-          const lastMsg = unreadMessages[0].data();
-          notifs.push({
-            id: `msg-${session.id}`,
-            type: 'new_message',
-            title: 'New Message',
-            message: `${lastMsg.fromName}: ${lastMsg.body.substring(0, 50)}${lastMsg.body.length > 50 ? '...' : ''}`,
-            time: lastMsg.createdAt,
-            link: 'chat',
-            sessionId: session.id,
-            session: session
-          });
-        }
-      } catch (error) {
-        console.log('Error loading messages for session:', session.id);
       }
     }
     
+    // Sort by time
     notifs.sort((a, b) => (b.time?.seconds || 0) - (a.time?.seconds || 0));
     
     setNotifications(notifs);
@@ -183,42 +212,35 @@ export default function SkillSwap() {
         setSessions(sessionsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
         
         const usersSnap = await getDocs(collection(db, 'users'));
-        setAllUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled));
+        const loadedUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled);
+        
+        console.log('Loaded users:', loadedUsers.length);
+        console.log('Sample user:', loadedUsers[0]);
+        if (loadedUsers[0]?.offeredSkills) {
+          console.log('First user skills:', loadedUsers[0].offeredSkills);
+        }
+        
+        setAllUsers(loadedUsers);
       } catch (error) {
-        setAllUsers([]);
+        console.error('Error loading users:', error);
+        alert('⚠️ Error loading users. Check console for details.');
       }
     }
     if (page === 'admin') {
-      try {
-        const usersSnap = await getDocs(collection(db, 'users'));
-        const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        
-        const usersWithStats = await Promise.all(users.map(async (u) => {
-          const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', u.id)));
-          return {
-            ...u,
-            totalSessions: userSessions.docs.length,
-            completedSessions: userSessions.docs.filter(s => s.data().status === 'completed').length
-          };
-        }));
-        
-        setAdminUsers(usersWithStats);
-      } catch (error) {
-        setAdminUsers([]);
-      }
-    }
-    if (page === 'dashboard' && selectedUser) {
-      await loadUserRatings(selectedUser.id);
-    }
-  };
-
-  const loadUserRatings = async (userId) => {
-    try {
-      const ratingsSnap = await getDocs(query(collection(db, 'ratings'), where('rateeId', '==', userId), orderBy('createdAt', 'desc')));
-      const ratings = ratingsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setUserRatings(ratings);
-    } catch (error) {
-      setUserRatings([]);
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      // Get session counts for each user
+      const usersWithStats = await Promise.all(users.map(async (u) => {
+        const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', u.id)));
+        return {
+          ...u,
+          totalSessions: userSessions.docs.length,
+          completedSessions: userSessions.docs.filter(s => s.data().status === 'completed').length
+        };
+      }));
+      
+      setAdminUsers(usersWithStats);
     }
   };
 
@@ -230,8 +252,7 @@ export default function SkillSwap() {
         await setDoc(doc(db, 'users', cred.user.uid), {
           name, email, role, gradYear, createdAt: Timestamp.now(),
           offeredSkills: [], soughtSkills: [], achievements: [], sessionsCompleted: 0,
-          allowSessionRequests: true, allowMessages: true, isPrivate: false, disabled: false,
-          settings: settings
+          allowSessionRequests: true, allowMessages: true, isPrivate: false, disabled: false
         });
       } else {
         await signInWithEmailAndPassword(auth, email, password);
@@ -247,27 +268,14 @@ export default function SkillSwap() {
 
   const requestSession = async () => {
     if (!selectedUser || !sessionSkill || !sessionDate || !sessionTime) return alert('Fill all fields!');
-    
-    const sessionDateTime = new Date(`${sessionDate}T${sessionTime}`);
-    const now = new Date();
-    
-    if (sessionDateTime < now) {
-      alert('⚠️ Session date and time must be in the future!');
-      return;
-    }
-    
     await addDoc(collection(db, 'sessions'), {
       requesterId: user.uid, requesterName: userProfile.name,
       providerId: selectedUser.id, providerName: selectedUser.name,
-      skill: sessionSkill, startTime: Timestamp.fromDate(sessionDateTime),
+      skill: sessionSkill, startTime: Timestamp.fromDate(new Date(`${sessionDate}T${sessionTime}`)),
       location: sessionLocation, status: 'pending', participants: [user.uid, selectedUser.id],
       createdAt: Timestamp.now()
     });
     alert('🚀 Session requested!');
-    setSessionSkill('');
-    setSessionDate('');
-    setSessionTime('');
-    setSessionLocation('');
     setPage('dashboard');
     loadUserData();
   };
@@ -275,42 +283,19 @@ export default function SkillSwap() {
   const updateSessionStatus = async (sid, status) => {
     await updateDoc(doc(db, 'sessions', sid), { status });
     if (status === 'completed') {
-      const sess = sessions.find(s => s.id === sid);
-      const providerId = sess.providerId;
-      const providerDoc = await getDoc(doc(db, 'users', providerId));
-      if (providerDoc.exists()) {
-        const cnt = (providerDoc.data().sessionsCompleted || 0) + 1;
-        await updateDoc(doc(db, 'users', providerId), { sessionsCompleted: cnt });
-      }
+      const cnt = (userProfile.sessionsCompleted || 0) + 1;
+      await updateDoc(doc(db, 'users', user.uid), { sessionsCompleted: cnt });
     }
     loadUserData();
   };
 
   const submitRating = async (sid) => {
-    if (!ratingComment.trim()) {
-      alert('⚠️ Please write a comment for your rating!');
-      return;
-    }
-    
     const sess = sessions.find(s => s.id === sid);
-    const rateeId = sess.requesterId === user.uid ? sess.providerId : sess.requesterId;
-    const rateeName = sess.requesterId === user.uid ? sess.providerName : sess.requesterName;
-    
     await addDoc(collection(db, 'ratings'), {
-      sessionId: sid, 
-      raterId: user.uid, 
-      raterName: userProfile.name,
-      rateeId: rateeId,
-      rateeName: rateeName,
-      score: ratingScore, 
-      comment: ratingComment, 
-      skill: sess.skill,
-      createdAt: Timestamp.now()
+      sessionId: sid, raterId: user.uid, rateeId: sess.requesterId === user.uid ? sess.providerId : sess.requesterId,
+      score: ratingScore, comment: ratingComment, createdAt: Timestamp.now()
     });
-    
     alert('⭐ Rating submitted!');
-    setRatingScore(5);
-    setRatingComment('');
     setSelectedSession(null);
     setPage('sessions');
   };
@@ -318,11 +303,8 @@ export default function SkillSwap() {
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
     await addDoc(collection(db, 'messages'), {
-      sessionId: selectedSession.id, 
-      fromUserId: user.uid, 
-      fromName: userProfile.name,
-      body: newMessage, 
-      createdAt: Timestamp.now()
+      sessionId: selectedSession.id, fromUserId: user.uid, fromName: userProfile.name,
+      body: newMessage, createdAt: Timestamp.now()
     });
     setNewMessage('');
     loadMessages(selectedSession.id);
@@ -333,6 +315,7 @@ export default function SkillSwap() {
     setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
 
+  // Admin functions
   const toggleUserStatus = async (userId, currentStatus) => {
     await updateDoc(doc(db, 'users', userId), { disabled: !currentStatus });
     alert(!currentStatus ? '🚫 User disabled' : '✅ User enabled');
@@ -342,21 +325,25 @@ export default function SkillSwap() {
   const deleteUser = async (userId) => {
     if (!confirm('⚠️ Are you sure? This will permanently delete this user and all their data.')) return;
     
+    // Delete user sessions
     const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', userId)));
     for (const sessionDoc of userSessions.docs) {
       await deleteDoc(doc(db, 'sessions', sessionDoc.id));
     }
     
+    // Delete user ratings
     const userRatings = await getDocs(query(collection(db, 'ratings'), where('raterId', '==', userId)));
     for (const ratingDoc of userRatings.docs) {
       await deleteDoc(doc(db, 'ratings', ratingDoc.id));
     }
     
+    // Delete user messages
     const userMessages = await getDocs(query(collection(db, 'messages'), where('fromUserId', '==', userId)));
     for (const msgDoc of userMessages.docs) {
       await deleteDoc(doc(db, 'messages', msgDoc.id));
     }
     
+    // Finally delete user document
     await deleteDoc(doc(db, 'users', userId));
     
     alert('🗑️ User deleted successfully');
@@ -377,17 +364,6 @@ export default function SkillSwap() {
     return `${year}-${month}-${day}`;
   };
 
-  const handleNotificationClick = (notif) => {
-    if (notif.link === 'chat' && notif.session) {
-      setSelectedSession(notif.session);
-      loadMessages(notif.sessionId);
-      setPage('chat');
-    } else {
-      setPage(notif.link);
-    }
-    setUnreadCount(Math.max(0, unreadCount - 1));
-  };
-
   if (loading) return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
       <div className="relative">
@@ -399,6 +375,7 @@ export default function SkillSwap() {
 
   if (page === 'login') return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Subtle background elements */}
       <div className="absolute inset-0 overflow-hidden opacity-30">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl"></div>
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
@@ -539,25 +516,6 @@ export default function SkillSwap() {
           )}
         </div>
         <div className="flex items-center space-x-4">
-          {userProfile?.role === 'student' && (
-            <button 
-              onClick={() => setPage('notifications')}
-              className="relative p-2 text-slate-400 hover:text-white transition-colors"
-            >
-              <Bell size={24} />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-          )}
-          <button 
-            onClick={() => setPage('settings')}
-            className="text-slate-400 hover:text-white transition-colors"
-          >
-            <Award size={24} />
-          </button>
           <div className="text-right">
             <p className="text-white font-semibold">{userProfile?.name}</p>
             <p className="text-xs text-slate-400">{userProfile?.role}</p>
@@ -599,7 +557,19 @@ export default function SkillSwap() {
             <p className="text-4xl font-black bg-gradient-to-r from-orange-400 via-pink-500 to-blue-500 bg-clip-text text-transparent">{userProfile?.name}!</p>
           </div>
 
+          {/* Stats Grid */}
           <div className="grid md:grid-cols-3 gap-6 mb-8">
+            <div className="group relative bg-gradient-to-br from-orange-500/20 to-red-500/20 p-6 rounded-2xl border border-orange-500/30 hover:border-orange-500/50 transition-all hover:scale-[1.02] cursor-pointer">
+              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/0 to-red-500/0 group-hover:from-orange-500/10 group-hover:to-red-500/10 rounded-2xl transition-all"></div>
+              <div className="relative">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-slate-300 text-sm font-semibold">Sessions Completed</p>
+                  <CheckCircle className="text-orange-400" size={24} />
+                </div>
+                <p className="text-5xl font-black text-white">{userProfile?.sessionsCompleted || 0}</p>
+              </div>
+            </div>
+
             <div className="group relative bg-gradient-to-br from-blue-500/20 to-purple-500/20 p-6 rounded-2xl border border-blue-500/30 hover:border-blue-500/50 transition-all hover:scale-[1.02] cursor-pointer">
               <div className="absolute inset-0 bg-gradient-to-br from-blue-500/0 to-purple-500/0 group-hover:from-blue-500/10 group-hover:to-purple-500/10 rounded-2xl transition-all"></div>
               <div className="relative">
@@ -623,6 +593,7 @@ export default function SkillSwap() {
             </div>
           </div>
 
+          {/* Achievements Section */}
           {userProfile?.achievements?.length > 0 && (
             <div className="mb-8 bg-slate-900/50 backdrop-blur-xl p-8 rounded-3xl border border-blue-500/30">
               <h3 className="text-3xl font-black text-white mb-6 flex items-center">
@@ -645,6 +616,7 @@ export default function SkillSwap() {
             </div>
           )}
 
+          {/* Find Skills Section */}
           <div className="bg-slate-900/50 backdrop-blur-xl p-8 rounded-3xl border border-orange-500/30">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
               <h3 className="text-4xl font-black text-white flex items-center">
@@ -735,10 +707,7 @@ export default function SkillSwap() {
                 className="w-full px-5 py-4 bg-slate-950/50 text-white rounded-xl border border-slate-700/50 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 outline-none transition-all"
               >
                 <option value="">Choose skill...</option>
-                {selectedUser.offeredSkills?.map((sk, i) => {
-                  const skillName = typeof sk === 'string' ? sk : sk.name;
-                  return <option key={i} value={skillName}>{skillName}</option>;
-                })}
+                {selectedUser.offeredSkills?.map((sk, i) => <option key={i} value={sk.name}>{sk.name}</option>)}
               </select>
             </div>
             
@@ -803,6 +772,7 @@ export default function SkillSwap() {
           </h2>
           
           <div className="grid lg:grid-cols-3 gap-6">
+            {/* Pending */}
             <div className="bg-slate-900/50 backdrop-blur-xl p-6 rounded-3xl border border-orange-500/30">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-2xl font-bold text-orange-400 flex items-center">
@@ -842,6 +812,7 @@ export default function SkillSwap() {
               </div>
             </div>
 
+            {/* Upcoming */}
             <div className="bg-slate-900/50 backdrop-blur-xl p-6 rounded-3xl border border-blue-500/30">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-2xl font-bold text-blue-400 flex items-center">
@@ -879,6 +850,7 @@ export default function SkillSwap() {
               </div>
             </div>
 
+            {/* Completed */}
             <div className="bg-slate-900/50 backdrop-blur-xl p-6 rounded-3xl border border-green-500/30">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-2xl font-bold text-green-400 flex items-center">
@@ -917,14 +889,14 @@ export default function SkillSwap() {
       <Nav />
       <div className="max-w-4xl mx-auto p-6">
         <h2 className="text-4xl font-black text-white mb-8 flex items-center">
-          <Bell className="mr-3 text-purple-400" />
+          <MessageCircle className="mr-3 text-purple-400" />
           Notifications
         </h2>
         
         <div className="space-y-3">
           {notifications.length === 0 ? (
             <div className="bg-slate-900/50 backdrop-blur-xl p-12 rounded-3xl border border-slate-700/50 text-center">
-              <Bell className="mx-auto text-slate-600 mb-4" size={48} />
+              <MessageCircle className="mx-auto text-slate-600 mb-4" size={48} />
               <p className="text-slate-400 text-lg">No notifications yet</p>
               <p className="text-slate-500 text-sm mt-2">You'll see updates about sessions and messages here</p>
             </div>
@@ -932,7 +904,16 @@ export default function SkillSwap() {
             notifications.map(notif => (
               <div 
                 key={notif.id}
-                onClick={() => handleNotificationClick(notif)}
+                onClick={() => {
+                  if (notif.link === 'chat' && notif.session) {
+                    setSelectedSession(notif.session);
+                    loadMessages(notif.sessionId);
+                    setPage('chat');
+                  } else {
+                    setPage(notif.link);
+                  }
+                  setUnreadCount(Math.max(0, unreadCount - 1));
+                }}
                 className="bg-slate-900/50 backdrop-blur-xl p-6 rounded-2xl border border-slate-700/50 hover:border-purple-500/50 transition-all cursor-pointer group"
               >
                 <div className="flex items-start gap-4">
@@ -985,11 +966,11 @@ export default function SkillSwap() {
                 </div>
                 <button
                   onClick={() => setSettings({...settings, emailNotifications: !settings.emailNotifications})}
-                  className={`w-14 h-8 rounded-full transition-all relative ${
+                  className={`w-14 h-8 rounded-full transition-all ${
                     settings.emailNotifications ? 'bg-green-500' : 'bg-slate-600'
                   }`}
                 >
-                  <div className={`absolute w-6 h-6 bg-white rounded-full top-1 transition-transform ${
+                  <div className={`w-6 h-6 bg-white rounded-full transition-transform ${
                     settings.emailNotifications ? 'translate-x-7' : 'translate-x-1'
                   }`}></div>
                 </button>
@@ -1002,11 +983,11 @@ export default function SkillSwap() {
                 </div>
                 <button
                   onClick={() => setSettings({...settings, sessionReminders: !settings.sessionReminders})}
-                  className={`w-14 h-8 rounded-full transition-all relative ${
+                  className={`w-14 h-8 rounded-full transition-all ${
                     settings.sessionReminders ? 'bg-green-500' : 'bg-slate-600'
                   }`}
                 >
-                  <div className={`absolute w-6 h-6 bg-white rounded-full top-1 transition-transform ${
+                  <div className={`w-6 h-6 bg-white rounded-full transition-transform ${
                     settings.sessionReminders ? 'translate-x-7' : 'translate-x-1'
                   }`}></div>
                 </button>
@@ -1019,11 +1000,11 @@ export default function SkillSwap() {
                 </div>
                 <button
                   onClick={() => setSettings({...settings, showProfile: !settings.showProfile})}
-                  className={`w-14 h-8 rounded-full transition-all relative ${
+                  className={`w-14 h-8 rounded-full transition-all ${
                     settings.showProfile ? 'bg-green-500' : 'bg-slate-600'
                   }`}
                 >
-                  <div className={`absolute w-6 h-6 bg-white rounded-full top-1 transition-transform ${
+                  <div className={`w-6 h-6 bg-white rounded-full transition-transform ${
                     settings.showProfile ? 'translate-x-7' : 'translate-x-1'
                   }`}></div>
                 </button>
@@ -1192,7 +1173,8 @@ export default function SkillSwap() {
           </button>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-6 mb-6">
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* Skills I Offer */}
           <div className="bg-slate-900/80 backdrop-blur-xl p-6 rounded-3xl border border-orange-500/30 shadow-xl">
             <h3 className="text-2xl font-bold text-orange-400 mb-5 flex items-center">
               <Target className="mr-2" size={24} />
@@ -1202,7 +1184,7 @@ export default function SkillSwap() {
             <div className="space-y-2 mb-5">
               {offeredSkills.map((sk, i) => (
                 <div key={i} className="flex items-center justify-between bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 group hover:border-orange-500/50 transition-all">
-                  <span className="text-white font-semibold">{typeof sk === 'string' ? sk : sk.name}</span>
+                  <span className="text-white font-semibold">{sk.name}</span>
                   <button 
                     onClick={() => setOfferedSkills(offeredSkills.filter((_, idx) => idx !== i))}
                     className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-all"
@@ -1235,6 +1217,7 @@ export default function SkillSwap() {
             </div>
           </div>
 
+          {/* Skills I Want */}
           <div className="bg-slate-900/80 backdrop-blur-xl p-6 rounded-3xl border border-blue-500/30 shadow-xl">
             <h3 className="text-2xl font-bold text-blue-400 mb-5 flex items-center">
               <Sparkles className="mr-2" size={24} />
@@ -1244,7 +1227,7 @@ export default function SkillSwap() {
             <div className="space-y-2 mb-5">
               {soughtSkills.map((sk, i) => (
                 <div key={i} className="flex items-center justify-between bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 group hover:border-blue-500/50 transition-all">
-                  <span className="text-white font-semibold">{typeof sk === 'string' ? sk : sk.name}</span>
+                  <span className="text-white font-semibold">{sk.name}</span>
                   <button 
                     onClick={() => setSoughtSkills(soughtSkills.filter((_, idx) => idx !== i))}
                     className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-all"
@@ -1277,39 +1260,6 @@ export default function SkillSwap() {
             </div>
           </div>
         </div>
-
-        {userRatings.length > 0 && (
-          <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-3xl border border-yellow-500/30 shadow-xl">
-            <h3 className="text-2xl font-bold text-yellow-400 mb-6 flex items-center">
-              <Star className="mr-2" size={24} />
-              Reviews & Ratings
-            </h3>
-            
-            <div className="space-y-4">
-              {userRatings.map(rating => (
-                <div key={rating.id} className="bg-slate-800/50 p-5 rounded-2xl border border-slate-700/50">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      {[1,2,3,4,5].map(n => (
-                        <Star 
-                          key={n} 
-                          size={18} 
-                          className={rating.score >= n ? 'text-yellow-400' : 'text-slate-600'}
-                          fill={rating.score >= n ? 'currentColor' : 'none'}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-sm text-slate-400">{rating.skill}</span>
-                  </div>
-                  <p className="text-white mb-2">{rating.comment}</p>
-                  <p className="text-xs text-slate-500">
-                    - {rating.raterName} · {rating.createdAt?.toDate?.()?.toLocaleDateString() || 'Recent'}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1332,6 +1282,7 @@ export default function SkillSwap() {
             <p className="text-slate-400 text-lg">Manage users and monitor platform activity</p>
           </div>
 
+          {/* Stats Overview */}
           <div className="grid md:grid-cols-4 gap-6 mb-8">
             <div className="bg-gradient-to-br from-blue-500/20 to-purple-500/20 p-6 rounded-2xl border border-blue-500/30">
               <div className="flex items-center justify-between mb-2">
@@ -1366,6 +1317,7 @@ export default function SkillSwap() {
             </div>
           </div>
 
+          {/* User Management Table */}
           <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-3xl border border-red-500/30 shadow-2xl">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
               <h3 className="text-2xl font-bold text-white flex items-center">
@@ -1478,15 +1430,5 @@ export default function SkillSwap() {
     );
   }
 
-  return null;-orange-500/20 to-red-500/20 p-6 rounded-2xl border border-orange-500/30 hover:border-orange-500/50 transition-all hover:scale-[1.02] cursor-pointer">
-              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/0 to-red-500/0 group-hover:from-orange-500/10 group-hover:to-red-500/10 rounded-2xl transition-all"></div>
-              <div className="relative">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-slate-300 text-sm font-semibold">Sessions Completed</p>
-                  <CheckCircle className="text-orange-400" size={24} />
-                </div>
-                <p className="text-5xl font-black text-white">{userProfile?.sessionsCompleted || 0}</p>
-              </div>
-            </div>
-
-            <div className="group relative bg-gradient-to-br from
+  return null;
+}
