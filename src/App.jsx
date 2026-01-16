@@ -394,11 +394,21 @@ export default function SkillSwap() {
 
   if (page === 'dashboard') {
     const filtered = allUsers.filter(u => {
-      const searchLower = searchTerm.toLowerCase();
+      const searchLower = searchTerm.toLowerCase().trim();
+      
+      // If no search term, show all users
+      if (!searchLower) return true;
+      
+      // Search by name
       const nameMatch = u.name?.toLowerCase().includes(searchLower);
-      const skillMatch = u.offeredSkills?.some(skill => 
-        skill.name?.toLowerCase().includes(searchLower)
-      );
+      
+      // Search by offered skills - check if offeredSkills exists and is an array
+      const skillMatch = Array.isArray(u.offeredSkills) && u.offeredSkills.some(skill => {
+        // Handle both string and object formats
+        const skillName = typeof skill === 'string' ? skill : skill?.name;
+        return skillName?.toLowerCase().includes(searchLower);
+      });
+      
       return nameMatch || skillMatch;
     });
     
@@ -492,43 +502,51 @@ export default function SkillSwap() {
             </div>
 
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filtered.map(student => (
-                <div key={student.id} className="group relative bg-slate-800/50 backdrop-blur-sm p-6 rounded-2xl border border-slate-700/50 hover:border-blue-500/50 transition-all hover:scale-[1.02]">
-                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500/0 to-purple-500/0 group-hover:from-blue-500/5 group-hover:to-purple-500/5 rounded-2xl transition-all"></div>
-                  
-                  <div className="relative">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h4 className="font-black text-white text-xl mb-1">{student.name}</h4>
-                        <p className="text-sm text-slate-400 font-medium">Class of {student.gradYear}</p>
-                      </div>
-                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-lg shadow-blue-500/25">
-                        <User className="text-white" size={28} />
-                      </div>
-                    </div>
-
-                    {student.offeredSkills?.length > 0 && (
-                      <div className="mb-4">
-                        <p className="text-xs text-slate-400 font-semibold mb-2 uppercase tracking-wider">Offers</p>
-                        <div className="flex flex-wrap gap-2">
-                          {student.offeredSkills.map((sk, i) => (
-                            <span key={i} className="px-3 py-1.5 bg-gradient-to-r from-orange-500/20 to-red-500/20 border border-orange-500/30 text-orange-300 text-xs font-semibold rounded-full">
-                              {sk.name}
-                            </span>
-                          ))}
+              {filtered.length === 0 ? (
+                <div className="col-span-full text-center py-16">
+                  <Search className="mx-auto text-slate-600 mb-4" size={48} />
+                  <p className="text-slate-400 text-lg">No students found matching "{searchTerm}"</p>
+                  <p className="text-slate-500 text-sm mt-2">Try searching by name or skill</p>
+                </div>
+              ) : (
+                filtered.map(student => (
+                  <div key={student.id} className="group relative bg-slate-800/50 backdrop-blur-sm p-6 rounded-2xl border border-slate-700/50 hover:border-blue-500/50 transition-all hover:scale-[1.02]">
+                    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/0 to-purple-500/0 group-hover:from-blue-500/5 group-hover:to-purple-500/5 rounded-2xl transition-all"></div>
+                    
+                    <div className="relative">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h4 className="font-black text-white text-xl mb-1">{student.name}</h4>
+                          <p className="text-sm text-slate-400 font-medium">Class of {student.gradYear}</p>
+                        </div>
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-lg shadow-blue-500/25">
+                          <User className="text-white" size={28} />
                         </div>
                       </div>
-                    )}
 
-                    <button 
-                      onClick={() => { setSelectedUser(student); setPage('request'); }}
-                      className="w-full py-3 bg-gradient-to-r from-orange-500 via-pink-500 to-blue-500 text-white rounded-xl font-bold hover:scale-105 active:scale-95 transition-all shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40"
-                    >
-                      Request Session
-                    </button>
+                      {student.offeredSkills?.length > 0 && (
+                        <div className="mb-4">
+                          <p className="text-xs text-slate-400 font-semibold mb-2 uppercase tracking-wider">Offers</p>
+                          <div className="flex flex-wrap gap-2">
+                            {student.offeredSkills.map((sk, i) => (
+                              <span key={i} className="px-3 py-1.5 bg-gradient-to-r from-orange-500/20 to-red-500/20 border border-orange-500/30 text-orange-300 text-xs font-semibold rounded-full">
+                                {typeof sk === 'string' ? sk : sk.name}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <button 
+                        onClick={() => { setSelectedUser(student); setPage('request'); }}
+                        className="w-full py-3 bg-gradient-to-r from-orange-500 via-pink-500 to-blue-500 text-white rounded-xl font-bold hover:scale-105 active:scale-95 transition-all shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40"
+                      >
+                        Request Session
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>
