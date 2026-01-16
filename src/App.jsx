@@ -1,4 +1,36 @@
-import React, { useState, useEffect } from 'react';
+const loadUserData = async () => {
+    if (page === 'dashboard' || page === 'sessions') {
+      try {
+        const sessionsSnap = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', user.uid)));
+        setSessions(sessionsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        
+        const usersSnap = await getDocs(collection(db, 'users'));
+        setAllUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled));
+      } catch (error) {
+        // Silently handle error - permissions issue
+        setAllUsers([]);
+      }
+    }
+    if (page === 'admin') {
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        const usersWithStats = await Promise.all(users.map(async (u) => {
+          const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', u.id)));
+          return {
+            ...u,
+            totalSessions: userSessions.docs.length,
+            completedSessions: userSessions.docs.filter(s => s.data().status === 'completed').length
+          };
+        }));
+        
+        setAdminUsers(usersWithStats);
+      } catch (error) {
+        setAdminUsers([]);
+      }
+    }
+  };import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy, Timestamp } from 'firebase/firestore';
@@ -54,6 +86,13 @@ export default function SkillSwap() {
   const [searchTerm, setSearchTerm] = useState('');
   const [adminSearchTerm, setAdminSearchTerm] = useState('');
   const [selectedAdminUser, setSelectedAdminUser] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [settings, setSettings] = useState({
+    emailNotifications: true,
+    sessionReminders: true,
+    showProfile: true
+  });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -87,6 +126,84 @@ export default function SkillSwap() {
   useEffect(() => {
     if (user && userProfile) loadUserData();
   }, [user, userProfile, page]);
+
+  useEffect(() => {
+    if (user && (page === 'dashboard' || page === 'sessions' || page === 'notifications')) {
+      loadNotifications();
+    }
+  }, [user, page, sessions, messages]);
+
+  const loadNotifications = async () => {
+    if (!user) return;
+    
+    const notifs = [];
+    
+    // Check for new session requests
+    const pendingSessions = sessions.filter(s => 
+      s.status === 'pending' && s.providerId === user.uid
+    );
+    pendingSessions.forEach(s => {
+      notifs.push({
+        id: `session-${s.id}`,
+        type: 'session_request',
+        title: 'New Session Request',
+        message: `${s.requesterName} wants to learn ${s.skill}`,
+        time: s.createdAt,
+        link: 'sessions',
+        sessionId: s.id
+      });
+    });
+    
+    // Check for accepted sessions
+    const acceptedSessions = sessions.filter(s => 
+      s.status === 'accepted' && s.requesterId === user.uid
+    );
+    acceptedSessions.forEach(s => {
+      notifs.push({
+        id: `accepted-${s.id}`,
+        type: 'session_accepted',
+        title: 'Session Accepted!',
+        message: `${s.providerName} accepted your ${s.skill} session`,
+        time: s.createdAt,
+        link: 'sessions',
+        sessionId: s.id
+      });
+    });
+    
+    // Check for new messages
+    const userSessions = sessions.filter(s => s.status === 'accepted');
+    for (const session of userSessions) {
+      const messagesSnap = await getDocs(
+        query(
+          collection(db, 'messages'), 
+          where('sessionId', '==', session.id),
+          where('fromUserId', '!=', user.uid),
+          orderBy('fromUserId'),
+          orderBy('createdAt', 'desc')
+        )
+      );
+      
+      if (messagesSnap.docs.length > 0) {
+        const lastMsg = messagesSnap.docs[0].data();
+        notifs.push({
+          id: `msg-${session.id}`,
+          type: 'new_message',
+          title: 'New Message',
+          message: `${lastMsg.fromName}: ${lastMsg.body.substring(0, 50)}...`,
+          time: lastMsg.createdAt,
+          link: 'chat',
+          sessionId: session.id,
+          session: session
+        });
+      }
+    }
+    
+    // Sort by time
+    notifs.sort((a, b) => (b.time?.seconds || 0) - (a.time?.seconds || 0));
+    
+    setNotifications(notifs);
+    setUnreadCount(notifs.length);
+  };
 
   const loadUserData = async () => {
     if (page === 'dashboard' || page === 'sessions') {
@@ -144,8 +261,8 @@ export default function SkillSwap() {
   };
 
   const updateProfile = async () => {
-    await updateDoc(doc(db, 'users', user.uid), { bio, offeredSkills, soughtSkills });
-    setUserProfile({ ...userProfile, bio, offeredSkills, soughtSkills });
+    await updateDoc(doc(db, 'users', user.uid), { bio, offeredSkills, soughtSkills, settings });
+    setUserProfile({ ...userProfile, bio, offeredSkills, soughtSkills, settings });
     alert('✅ Profile saved!');
   };
 
@@ -237,6 +354,14 @@ export default function SkillSwap() {
     await updateDoc(doc(db, 'users', userId), { role: newRole });
     alert(`✅ User role changed to ${newRole}`);
     loadUserData();
+  };
+
+  const getTodayDate = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
 
   if (loading) return (
@@ -409,26 +534,16 @@ export default function SkillSwap() {
   if (page === 'dashboard') {
     const filtered = allUsers.filter(u => {
       const searchLower = searchTerm.toLowerCase().trim();
-      
-      // If no search term, show all users
       if (!searchLower) return true;
       
-      // Search by name
       const nameMatch = u.name?.toLowerCase().includes(searchLower);
-      
-      // Search by offered skills - check if offeredSkills exists and is an array
       const skillMatch = Array.isArray(u.offeredSkills) && u.offeredSkills.some(skill => {
-        // Handle both string and object formats
         const skillName = typeof skill === 'string' ? skill : skill?.name;
         return skillName?.toLowerCase().includes(searchLower);
       });
       
-      console.log(`Checking user ${u.name}: nameMatch=${nameMatch}, skillMatch=${skillMatch}, skills=`, u.offeredSkills);
-      
       return nameMatch || skillMatch;
     });
-    
-    console.log(`Search term: "${searchTerm}", Found ${filtered.length} of ${allUsers.length} users`);
     
     return (
       <div className="min-h-screen bg-slate-950">
@@ -603,6 +718,7 @@ export default function SkillSwap() {
                   type="date" 
                   value={sessionDate} 
                   onChange={e => setSessionDate(e.target.value)}
+                  min={getTodayDate()}
                   className="w-full px-5 py-4 bg-slate-950/50 text-white rounded-xl border border-slate-700/50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all" 
                 />
               </div>
@@ -767,6 +883,169 @@ export default function SkillSwap() {
       </div>
     );
   }
+
+  if (page === 'notifications') return (
+    <div className="min-h-screen bg-slate-950">
+      <Nav />
+      <div className="max-w-4xl mx-auto p-6">
+        <h2 className="text-4xl font-black text-white mb-8 flex items-center">
+          <MessageCircle className="mr-3 text-purple-400" />
+          Notifications
+        </h2>
+        
+        <div className="space-y-3">
+          {notifications.length === 0 ? (
+            <div className="bg-slate-900/50 backdrop-blur-xl p-12 rounded-3xl border border-slate-700/50 text-center">
+              <MessageCircle className="mx-auto text-slate-600 mb-4" size={48} />
+              <p className="text-slate-400 text-lg">No notifications yet</p>
+              <p className="text-slate-500 text-sm mt-2">You'll see updates about sessions and messages here</p>
+            </div>
+          ) : (
+            notifications.map(notif => (
+              <div 
+                key={notif.id}
+                onClick={() => {
+                  if (notif.link === 'chat' && notif.session) {
+                    setSelectedSession(notif.session);
+                    loadMessages(notif.sessionId);
+                    setPage('chat');
+                  } else {
+                    setPage(notif.link);
+                  }
+                  setUnreadCount(Math.max(0, unreadCount - 1));
+                }}
+                className="bg-slate-900/50 backdrop-blur-xl p-6 rounded-2xl border border-slate-700/50 hover:border-purple-500/50 transition-all cursor-pointer group"
+              >
+                <div className="flex items-start gap-4">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                    notif.type === 'session_request' ? 'bg-orange-500/20 text-orange-400' :
+                    notif.type === 'session_accepted' ? 'bg-green-500/20 text-green-400' :
+                    'bg-blue-500/20 text-blue-400'
+                  }`}>
+                    {notif.type === 'session_request' && <Clock size={24} />}
+                    {notif.type === 'session_accepted' && <CheckCircle size={24} />}
+                    {notif.type === 'new_message' && <MessageCircle size={24} />}
+                  </div>
+                  
+                  <div className="flex-1">
+                    <h3 className="font-bold text-white text-lg mb-1">{notif.title}</h3>
+                    <p className="text-slate-400">{notif.message}</p>
+                    <p className="text-slate-500 text-sm mt-2">
+                      {notif.time?.toDate?.()?.toLocaleString() || 'Just now'}
+                    </p>
+                  </div>
+                  
+                  <ChevronDown className="text-slate-600 group-hover:text-purple-400 transition-colors transform -rotate-90" size={20} />
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (page === 'settings') return (
+    <div className="min-h-screen bg-slate-950">
+      <Nav />
+      <div className="max-w-3xl mx-auto p-6">
+        <h2 className="text-4xl font-black text-white mb-8 flex items-center">
+          <Award className="mr-3 text-slate-400" />
+          Settings
+        </h2>
+        
+        <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-3xl border border-slate-700/50 shadow-2xl space-y-6">
+          <div>
+            <h3 className="text-2xl font-bold text-white mb-6">Preferences</h3>
+            
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                <div>
+                  <p className="font-semibold text-white">Email Notifications</p>
+                  <p className="text-sm text-slate-400">Receive emails about new sessions</p>
+                </div>
+                <button
+                  onClick={() => setSettings({...settings, emailNotifications: !settings.emailNotifications})}
+                  className={`w-14 h-8 rounded-full transition-all ${
+                    settings.emailNotifications ? 'bg-green-500' : 'bg-slate-600'
+                  }`}
+                >
+                  <div className={`w-6 h-6 bg-white rounded-full transition-transform ${
+                    settings.emailNotifications ? 'translate-x-7' : 'translate-x-1'
+                  }`}></div>
+                </button>
+              </div>
+              
+              <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                <div>
+                  <p className="font-semibold text-white">Session Reminders</p>
+                  <p className="text-sm text-slate-400">Get reminded before sessions start</p>
+                </div>
+                <button
+                  onClick={() => setSettings({...settings, sessionReminders: !settings.sessionReminders})}
+                  className={`w-14 h-8 rounded-full transition-all ${
+                    settings.sessionReminders ? 'bg-green-500' : 'bg-slate-600'
+                  }`}
+                >
+                  <div className={`w-6 h-6 bg-white rounded-full transition-transform ${
+                    settings.sessionReminders ? 'translate-x-7' : 'translate-x-1'
+                  }`}></div>
+                </button>
+              </div>
+              
+              <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                <div>
+                  <p className="font-semibold text-white">Show Profile Publicly</p>
+                  <p className="text-sm text-slate-400">Let other students find you</p>
+                </div>
+                <button
+                  onClick={() => setSettings({...settings, showProfile: !settings.showProfile})}
+                  className={`w-14 h-8 rounded-full transition-all ${
+                    settings.showProfile ? 'bg-green-500' : 'bg-slate-600'
+                  }`}
+                >
+                  <div className={`w-6 h-6 bg-white rounded-full transition-transform ${
+                    settings.showProfile ? 'translate-x-7' : 'translate-x-1'
+                  }`}></div>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <div className="pt-6 border-t border-slate-700/50">
+            <h3 className="text-xl font-bold text-white mb-4">Account Information</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Name</span>
+                <span className="text-white font-semibold">{userProfile?.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Email</span>
+                <span className="text-white font-semibold">{userProfile?.email}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Class of</span>
+                <span className="text-white font-semibold">{userProfile?.gradYear}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Role</span>
+                <span className="px-3 py-1 bg-blue-500/20 border border-blue-500/30 text-blue-300 rounded-full text-sm font-bold">
+                  {userProfile?.role}
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <button 
+            onClick={updateProfile}
+            className="w-full py-4 bg-gradient-to-r from-purple-500 via-pink-500 to-blue-500 text-white font-bold rounded-xl hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 text-lg"
+          >
+            Save Settings ✅
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (page === 'chat' && selectedSession) return (
     <div className="min-h-screen bg-slate-950">
