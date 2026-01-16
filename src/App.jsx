@@ -1,36 +1,4 @@
-const loadUserData = async () => {
-    if (page === 'dashboard' || page === 'sessions') {
-      try {
-        const sessionsSnap = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', user.uid)));
-        setSessions(sessionsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-        
-        const usersSnap = await getDocs(collection(db, 'users'));
-        setAllUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled));
-      } catch (error) {
-        // Silently handle error - permissions issue
-        setAllUsers([]);
-      }
-    }
-    if (page === 'admin') {
-      try {
-        const usersSnap = await getDocs(collection(db, 'users'));
-        const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-        
-        const usersWithStats = await Promise.all(users.map(async (u) => {
-          const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', u.id)));
-          return {
-            ...u,
-            totalSessions: userSessions.docs.length,
-            completedSessions: userSessions.docs.filter(s => s.data().status === 'completed').length
-          };
-        }));
-        
-        setAdminUsers(usersWithStats);
-      } catch (error) {
-        setAdminUsers([]);
-      }
-    }
-  };import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy, Timestamp } from 'firebase/firestore';
@@ -88,6 +56,7 @@ export default function SkillSwap() {
   const [selectedAdminUser, setSelectedAdminUser] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [userRatings, setUserRatings] = useState([]);
   const [settings, setSettings] = useState({
     emailNotifications: true,
     sessionReminders: true,
@@ -173,28 +142,35 @@ export default function SkillSwap() {
     // Check for new messages
     const userSessions = sessions.filter(s => s.status === 'accepted');
     for (const session of userSessions) {
-      const messagesSnap = await getDocs(
-        query(
-          collection(db, 'messages'), 
-          where('sessionId', '==', session.id),
-          where('fromUserId', '!=', user.uid),
-          orderBy('fromUserId'),
-          orderBy('createdAt', 'desc')
-        )
-      );
-      
-      if (messagesSnap.docs.length > 0) {
-        const lastMsg = messagesSnap.docs[0].data();
-        notifs.push({
-          id: `msg-${session.id}`,
-          type: 'new_message',
-          title: 'New Message',
-          message: `${lastMsg.fromName}: ${lastMsg.body.substring(0, 50)}...`,
-          time: lastMsg.createdAt,
-          link: 'chat',
-          sessionId: session.id,
-          session: session
-        });
+      try {
+        const messagesSnap = await getDocs(
+          query(
+            collection(db, 'messages'), 
+            where('sessionId', '==', session.id),
+            orderBy('createdAt', 'desc')
+          )
+        );
+        
+        // Filter out messages from current user
+        const filteredMessages = messagesSnap.docs
+          .map(d => d.data())
+          .filter(msg => msg.fromUserId !== user.uid);
+        
+        if (filteredMessages.length > 0) {
+          const lastMsg = filteredMessages[0];
+          notifs.push({
+            id: `msg-${session.id}`,
+            type: 'new_message',
+            title: 'New Message',
+            message: `${lastMsg.fromName}: ${lastMsg.body.substring(0, 50)}...`,
+            time: lastMsg.createdAt,
+            link: 'chat',
+            sessionId: session.id,
+            session: session
+          });
+        }
+      } catch (error) {
+        console.error('Error loading messages for session:', session.id, error);
       }
     }
     
@@ -211,36 +187,37 @@ export default function SkillSwap() {
         const sessionsSnap = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', user.uid)));
         setSessions(sessionsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
         
+        // Load ratings for current user
+        const ratingsSnap = await getDocs(
+          query(collection(db, 'ratings'), where('rateeId', '==', user.uid))
+        );
+        setUserRatings(ratingsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        
         const usersSnap = await getDocs(collection(db, 'users'));
-        const loadedUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled);
-        
-        console.log('Loaded users:', loadedUsers.length);
-        console.log('Sample user:', loadedUsers[0]);
-        if (loadedUsers[0]?.offeredSkills) {
-          console.log('First user skills:', loadedUsers[0].offeredSkills);
-        }
-        
-        setAllUsers(loadedUsers);
+        setAllUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled));
       } catch (error) {
-        console.error('Error loading users:', error);
-        alert('⚠️ Error loading users. Check console for details.');
+        // Silently handle error - permissions issue
+        setAllUsers([]);
       }
     }
     if (page === 'admin') {
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      // Get session counts for each user
-      const usersWithStats = await Promise.all(users.map(async (u) => {
-        const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', u.id)));
-        return {
-          ...u,
-          totalSessions: userSessions.docs.length,
-          completedSessions: userSessions.docs.filter(s => s.data().status === 'completed').length
-        };
-      }));
-      
-      setAdminUsers(usersWithStats);
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        const usersWithStats = await Promise.all(users.map(async (u) => {
+          const userSessions = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', u.id)));
+          return {
+            ...u,
+            totalSessions: userSessions.docs.length,
+            completedSessions: userSessions.docs.filter(s => s.data().status === 'completed').length
+          };
+        }));
+        
+        setAdminUsers(usersWithStats);
+      } catch (error) {
+        setAdminUsers([]);
+      }
     }
   };
 
@@ -267,17 +244,43 @@ export default function SkillSwap() {
   };
 
   const requestSession = async () => {
-    if (!selectedUser || !sessionSkill || !sessionDate || !sessionTime) return alert('Fill all fields!');
-    await addDoc(collection(db, 'sessions'), {
-      requesterId: user.uid, requesterName: userProfile.name,
-      providerId: selectedUser.id, providerName: selectedUser.name,
-      skill: sessionSkill, startTime: Timestamp.fromDate(new Date(`${sessionDate}T${sessionTime}`)),
-      location: sessionLocation, status: 'pending', participants: [user.uid, selectedUser.id],
-      createdAt: Timestamp.now()
-    });
-    alert('🚀 Session requested!');
-    setPage('dashboard');
-    loadUserData();
+    if (!selectedUser || !sessionSkill || !sessionDate || !sessionTime) {
+      return alert('Fill all fields!');
+    }
+    
+    // Check if date is in the past
+    const selectedDateTime = new Date(`${sessionDate}T${sessionTime}`);
+    const now = new Date();
+    
+    if (selectedDateTime < now) {
+      return alert('⚠️ Session date and time cannot be in the past!');
+    }
+    
+    try {
+      await addDoc(collection(db, 'sessions'), {
+        requesterId: user.uid, 
+        requesterName: userProfile.name,
+        providerId: selectedUser.id, 
+        providerName: selectedUser.name,
+        skill: sessionSkill, 
+        startTime: Timestamp.fromDate(selectedDateTime),
+        location: sessionLocation, 
+        status: 'pending', 
+        participants: [user.uid, selectedUser.id],
+        createdAt: Timestamp.now()
+      });
+      
+      alert('🚀 Session requested!');
+      setSessionSkill('');
+      setSessionDate('');
+      setSessionTime('');
+      setSessionLocation('');
+      setPage('dashboard');
+      loadUserData();
+    } catch (error) {
+      console.error('Error requesting session:', error);
+      alert('Failed to request session. Please try again.');
+    }
   };
 
   const updateSessionStatus = async (sid, status) => {
@@ -290,29 +293,69 @@ export default function SkillSwap() {
   };
 
   const submitRating = async (sid) => {
-    const sess = sessions.find(s => s.id === sid);
-    await addDoc(collection(db, 'ratings'), {
-      sessionId: sid, raterId: user.uid, rateeId: sess.requesterId === user.uid ? sess.providerId : sess.requesterId,
-      score: ratingScore, comment: ratingComment, createdAt: Timestamp.now()
-    });
-    alert('⭐ Rating submitted!');
-    setSelectedSession(null);
-    setPage('sessions');
+    if (!ratingComment.trim()) {
+      alert('Please provide a comment with your rating!');
+      return;
+    }
+    
+    try {
+      const sess = sessions.find(s => s.id === sid);
+      const rateeId = sess.requesterId === user.uid ? sess.providerId : sess.requesterId;
+      
+      await addDoc(collection(db, 'ratings'), {
+        sessionId: sid, 
+        raterId: user.uid, 
+        raterName: userProfile.name,
+        rateeId: rateeId,
+        score: ratingScore, 
+        comment: ratingComment, 
+        skill: sess.skill,
+        createdAt: Timestamp.now()
+      });
+      
+      alert('⭐ Rating submitted!');
+      setRatingScore(5);
+      setRatingComment('');
+      setSelectedSession(null);
+      setPage('sessions');
+    } catch (error) {
+      console.error('Error submitting rating:', error);
+      alert('Failed to submit rating. Please try again.');
+    }
   };
 
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
-    await addDoc(collection(db, 'messages'), {
-      sessionId: selectedSession.id, fromUserId: user.uid, fromName: userProfile.name,
-      body: newMessage, createdAt: Timestamp.now()
-    });
-    setNewMessage('');
-    loadMessages(selectedSession.id);
+    try {
+      await addDoc(collection(db, 'messages'), {
+        sessionId: selectedSession.id, 
+        fromUserId: user.uid, 
+        fromName: userProfile.name,
+        body: newMessage, 
+        createdAt: Timestamp.now()
+      });
+      setNewMessage('');
+      await loadMessages(selectedSession.id);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      alert('Failed to send message. Please try again.');
+    }
   };
 
   const loadMessages = async (sid) => {
-    const snap = await getDocs(query(collection(db, 'messages'), where('sessionId', '==', sid), orderBy('createdAt')));
-    setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, 'messages'), 
+          where('sessionId', '==', sid), 
+          orderBy('createdAt', 'asc')
+        )
+      );
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (error) {
+      console.error('Error loading messages:', error);
+      setMessages([]);
+    }
   };
 
   // Admin functions
@@ -503,6 +546,32 @@ export default function SkillSwap() {
                 }`}
               >
                 <User size={18} /><span>Profile</span>
+              </button>
+              <button 
+                onClick={() => setPage('notifications')} 
+                className={`flex items-center space-x-2 px-4 py-2 rounded-xl font-semibold transition-all relative ${
+                  page === 'notifications' 
+                    ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg shadow-pink-500/25' 
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <MessageCircle size={18} />
+                <span>Notifications</span>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+              <button 
+                onClick={() => setPage('settings')} 
+                className={`flex items-center space-x-2 px-4 py-2 rounded-xl font-semibold transition-all ${
+                  page === 'settings' 
+                    ? 'bg-gradient-to-r from-slate-500 to-slate-600 text-white shadow-lg shadow-slate-500/25' 
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Award size={18} /><span>Settings</span>
               </button>
             </div>
           )}
@@ -1164,6 +1233,44 @@ export default function SkillSwap() {
               className="w-full px-5 py-4 bg-slate-950/50 text-white rounded-xl border border-slate-700/50 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all h-24 resize-none placeholder-slate-500" 
             />
           </div>
+
+          {/* Ratings Section */}
+          {userRatings.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-xl font-bold text-white mb-4 flex items-center">
+                <Star className="mr-2 text-yellow-400" size={24} />
+                Reviews ({userRatings.length})
+              </h3>
+              
+              <div className="space-y-3">
+                {userRatings.map(rating => (
+                  <div key={rating.id} className="bg-slate-800/50 p-5 rounded-xl border border-slate-700/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-white">{rating.raterName}</p>
+                        <span className="text-slate-500">•</span>
+                        <p className="text-sm text-slate-400">{rating.skill}</p>
+                      </div>
+                      <div className="flex">
+                        {[1,2,3,4,5].map(n => (
+                          <Star 
+                            key={n} 
+                            size={16} 
+                            className={n <= rating.score ? 'text-yellow-400' : 'text-slate-600'}
+                            fill={n <= rating.score ? 'currentColor' : 'none'}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <p className="text-slate-300">{rating.comment}</p>
+                    <p className="text-xs text-slate-500 mt-2">
+                      {rating.createdAt?.toDate?.()?.toLocaleDateString() || 'Recently'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           
           <button 
             onClick={updateProfile}
