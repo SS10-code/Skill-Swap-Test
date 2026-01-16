@@ -325,52 +325,35 @@ export default function SkillSwap() {
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedSession) return;
-    
-    const messageText = newMessage;
-    setNewMessage(''); // Clear input immediately for better UX
-    
+    if (!newMessage.trim()) return;
     try {
       await addDoc(collection(db, 'messages'), {
         sessionId: selectedSession.id, 
         fromUserId: user.uid, 
         fromName: userProfile.name,
-        body: messageText, 
+        body: newMessage, 
         createdAt: Timestamp.now()
       });
-      
-      // Reload messages to show the new one
+      setNewMessage('');
       await loadMessages(selectedSession.id);
     } catch (error) {
       console.error('Error sending message:', error);
-      setNewMessage(messageText); // Restore message on error
-      alert('Failed to send message: ' + error.message);
+      alert('Failed to send message. Please try again.');
     }
   };
 
   const loadMessages = async (sid) => {
-    if (!sid) return;
-    
     try {
-      const messagesQuery = query(
-        collection(db, 'messages'), 
-        where('sessionId', '==', sid)
+      const snap = await getDocs(
+        query(
+          collection(db, 'messages'), 
+          where('sessionId', '==', sid), 
+          orderBy('createdAt', 'asc')
+        )
       );
-      
-      const snap = await getDocs(messagesQuery);
-      const loadedMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      // Sort by createdAt on client side
-      loadedMessages.sort((a, b) => {
-        const aTime = a.createdAt?.seconds || 0;
-        const bTime = b.createdAt?.seconds || 0;
-        return aTime - bTime;
-      });
-      
-      setMessages(loadedMessages);
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
       console.error('Error loading messages:', error);
-      alert('Could not load messages: ' + error.message);
       setMessages([]);
     }
   };
@@ -1133,65 +1116,55 @@ export default function SkillSwap() {
     </div>
   );
 
-  if (page === 'chat' && selectedSession) {
-    // Auto-scroll to bottom when messages change
-    const messagesEndRef = React.useRef(null);
-    
-    React.useEffect(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
-    
-    return (
-      <div className="min-h-screen bg-slate-950">
-        <Nav />
-        <div className="max-w-4xl mx-auto p-6">
-          <button onClick={() => setPage('sessions')} className="mb-6 text-blue-400 hover:text-blue-300 font-medium transition-colors flex items-center">
-            ← Back to Sessions
-          </button>
+  if (page === 'chat' && selectedSession) return (
+    <div className="min-h-screen bg-slate-950">
+      <Nav />
+      <div className="max-w-4xl mx-auto p-6">
+        <button onClick={() => setPage('sessions')} className="mb-6 text-blue-400 hover:text-blue-300 font-medium transition-colors flex items-center">
+          ← Back to Sessions
+        </button>
+        
+        <div className="bg-slate-900/80 backdrop-blur-xl p-6 rounded-3xl border border-blue-500/30 shadow-2xl">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center">
+            <MessageCircle className="mr-3 text-blue-400" size={28} />
+            Chat: {selectedSession.skill}
+          </h2>
           
-          <div className="bg-slate-900/80 backdrop-blur-xl p-6 rounded-3xl border border-blue-500/30 shadow-2xl">
-            <h2 className="text-2xl font-bold text-white mb-6 flex items-center">
-              <MessageCircle className="mr-3 text-blue-400" size={28} />
-              Chat: {selectedSession.skill}
-            </h2>
-            
-            <div className="bg-slate-950/50 rounded-2xl p-5 h-96 overflow-y-auto mb-5 space-y-3 border border-slate-800/50">
-              {messages.map(m => (
-                <div key={m.id} className={`flex ${m.fromUserId === user.uid ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-xs ${m.fromUserId === user.uid ? 'bg-gradient-to-r from-blue-600 to-blue-700' : 'bg-slate-800'} p-4 rounded-2xl shadow-lg`}>
-                    <p className="text-xs text-slate-300 mb-1 font-semibold">{m.fromName}</p>
-                    <p className="text-white">{m.body}</p>
-                  </div>
+          <div className="bg-slate-950/50 rounded-2xl p-5 h-96 overflow-y-auto mb-5 space-y-3 border border-slate-800/50">
+            {messages.map(m => (
+              <div key={m.id} className={`flex ${m.fromUserId === user.uid ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-xs ${m.fromUserId === user.uid ? 'bg-gradient-to-r from-blue-600 to-blue-700' : 'bg-slate-800'} p-4 rounded-2xl shadow-lg`}>
+                  <p className="text-xs text-slate-300 mb-1 font-semibold">{m.fromName}</p>
+                  <p className="text-white">{m.body}</p>
                 </div>
-              ))}
-              <div ref={messagesEndRef} />
-              
-              {messages.length === 0 && (
-                <p className="text-slate-500 text-center py-16">No messages yet. Start the conversation!</p>
-              )}
-            </div>
+              </div>
+            ))}
             
-            <div className="flex gap-3">
-              <input 
-                type="text" 
-                value={newMessage} 
-                onChange={e => setNewMessage(e.target.value)}
-                onKeyPress={e => e.key === 'Enter' && sendMessage()}
-                placeholder="Type your message..." 
-                className="flex-1 px-5 py-4 bg-slate-950/50 text-white rounded-xl border border-slate-700/50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder-slate-500" 
-              />
-              <button 
-                onClick={sendMessage} 
-                className="px-6 py-4 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl font-semibold hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-500/25"
-              >
-                <Send size={20} />
-              </button>
-            </div>
+            {messages.length === 0 && (
+              <p className="text-slate-500 text-center py-16">No messages yet. Start the conversation!</p>
+            )}
+          </div>
+          
+          <div className="flex gap-3">
+            <input 
+              type="text" 
+              value={newMessage} 
+              onChange={e => setNewMessage(e.target.value)}
+              onKeyPress={e => e.key === 'Enter' && sendMessage()}
+              placeholder="Type your message..." 
+              className="flex-1 px-5 py-4 bg-slate-950/50 text-white rounded-xl border border-slate-700/50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder-slate-500" 
+            />
+            <button 
+              onClick={sendMessage} 
+              className="px-6 py-4 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl font-semibold hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-500/25"
+            >
+              <Send size={20} />
+            </button>
           </div>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 
   if (page === 'rate' && selectedSession) return (
     <div className="min-h-screen bg-slate-950">
