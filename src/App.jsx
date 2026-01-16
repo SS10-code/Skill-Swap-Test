@@ -90,10 +90,24 @@ export default function SkillSwap() {
 
   const loadUserData = async () => {
     if (page === 'dashboard' || page === 'sessions') {
-      const sessionsSnap = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', user.uid)));
-      setSessions(sessionsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      const usersSnap = await getDocs(collection(db, 'users'));
-      setAllUsers(usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled));
+      try {
+        const sessionsSnap = await getDocs(query(collection(db, 'sessions'), where('participants', 'array-contains', user.uid)));
+        setSessions(sessionsSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const loadedUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.id !== user.uid && u.role === 'student' && !u.disabled);
+        
+        console.log('Loaded users:', loadedUsers.length);
+        console.log('Sample user:', loadedUsers[0]);
+        if (loadedUsers[0]?.offeredSkills) {
+          console.log('First user skills:', loadedUsers[0].offeredSkills);
+        }
+        
+        setAllUsers(loadedUsers);
+      } catch (error) {
+        console.error('Error loading users:', error);
+        alert('⚠️ Error loading users. Check console for details.');
+      }
     }
     if (page === 'admin') {
       const usersSnap = await getDocs(collection(db, 'users'));
@@ -409,8 +423,12 @@ export default function SkillSwap() {
         return skillName?.toLowerCase().includes(searchLower);
       });
       
+      console.log(`Checking user ${u.name}: nameMatch=${nameMatch}, skillMatch=${skillMatch}, skills=`, u.offeredSkills);
+      
       return nameMatch || skillMatch;
     });
+    
+    console.log(`Search term: "${searchTerm}", Found ${filtered.length} of ${allUsers.length} users`);
     
     return (
       <div className="min-h-screen bg-slate-950">
