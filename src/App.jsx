@@ -226,7 +226,7 @@ export default function SkillSwap() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center">
       <div className="relative">
         <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-blue-500 rounded-full blur-2xl opacity-20 animate-pulse"></div>
         <Sparkles className="relative w-16 h-16 text-orange-500 animate-spin" />
@@ -235,22 +235,27 @@ export default function SkillSwap() {
   );
 
   if (page === 'login') return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Animated background elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl animate-pulse delay-700"></div>
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Subtle background elements */}
+      <div className="absolute inset-0 overflow-hidden opacity-30">
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
       </div>
       
       <div className="relative bg-slate-900/80 backdrop-blur-2xl rounded-3xl p-8 w-full max-w-md border border-orange-500/20 shadow-2xl shadow-orange-500/10">
-        <div className="flex items-center justify-center mb-2">
-          <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-blue-500 rounded-full blur-xl opacity-50"></div>
-            <Zap className="relative w-12 h-12 text-orange-500 mr-2" />
+        <div className="flex flex-col items-center justify-center mb-2">
+          <div className="flex items-center mb-2">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-blue-500 rounded-full blur-xl opacity-50"></div>
+              <Zap className="relative w-12 h-12 text-orange-500 mr-2" />
+            </div>
+            <h1 className="text-5xl font-black bg-gradient-to-r from-orange-400 via-pink-500 to-blue-500 bg-clip-text text-transparent">SkillSwap</h1>
           </div>
-          <h1 className="text-5xl font-black bg-gradient-to-r from-orange-400 via-pink-500 to-blue-500 bg-clip-text text-transparent">SkillSwap</h1>
+          <p className="text-slate-300 text-center font-medium mb-1">Student Talent Exchange Program</p>
+          <p className="text-slate-500 text-sm text-center">Wakeland High School BPA</p>
+          <p className="text-slate-500 text-xs text-center">Frisco, Texas, USA</p>
         </div>
-        <p className="text-slate-400 text-center mb-8 font-medium">Where Talents Meet & Grow</p>
+        <p className="text-slate-400 text-center mb-8 font-medium mt-4">Where Talents Meet & Grow</p>
         
         <form onSubmit={handleAuth} className="space-y-4">
           {isRegister && (
@@ -315,16 +320,19 @@ export default function SkillSwap() {
   );
 
   const Nav = () => (
-    <nav className="bg-slate-950/80 backdrop-blur-xl border-b border-slate-800/50 px-6 py-4 sticky top-0 z-50">
+    <nav className="bg-slate-900/95 backdrop-blur-xl border-b border-slate-800/50 px-6 py-4 sticky top-0 z-50">
       <div className="flex justify-between max-w-7xl mx-auto">
         <div className="flex items-center space-x-8">
-          <div className="flex items-center">
+          <button onClick={() => setPage(userProfile?.role === 'admin' ? 'admin' : 'dashboard')} className="flex items-center cursor-pointer hover:opacity-80 transition-opacity">
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-blue-500 rounded-full blur-lg opacity-50"></div>
               <Zap className="relative w-8 h-8 text-orange-500 mr-2" />
             </div>
-            <h1 className="text-2xl font-black bg-gradient-to-r from-orange-400 via-pink-500 to-blue-500 bg-clip-text text-transparent">SkillSwap</h1>
-          </div>
+            <div>
+              <h1 className="text-2xl font-black bg-gradient-to-r from-orange-400 via-pink-500 to-blue-500 bg-clip-text text-transparent">SkillSwap</h1>
+              <p className="text-xs text-slate-400">Student Talent Exchange</p>
+            </div>
+          </button>
           {userProfile?.role === 'student' && (
             <div className="flex space-x-2">
               <button 
@@ -385,9 +393,17 @@ export default function SkillSwap() {
   );
 
   if (page === 'dashboard') {
-    const filtered = allUsers.filter(u => u.name?.toLowerCase().includes(searchTerm.toLowerCase()));
+    const filtered = allUsers.filter(u => {
+      const searchLower = searchTerm.toLowerCase();
+      const nameMatch = u.name?.toLowerCase().includes(searchLower);
+      const skillMatch = u.offeredSkills?.some(skill => 
+        skill.name?.toLowerCase().includes(searchLower)
+      );
+      return nameMatch || skillMatch;
+    });
+    
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
+      <div className="min-h-screen bg-slate-950">
         <Nav />
         <div className="max-w-7xl mx-auto p-6">
           <div className="mb-8">
@@ -463,11 +479,11 @@ export default function SkillSwap() {
               <h3 className="text-4xl font-black text-white flex items-center">
                 <Target className="mr-3 text-orange-400" />Discover Skills
               </h3>
-              <div className="flex items-center bg-slate-950/50 px-5 py-3 rounded-xl border border-slate-700/50 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all w-full md:w-auto">
+              <div className="flex items-center bg-slate-900/80 px-5 py-3 rounded-xl border border-slate-700/50 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all w-full md:w-auto">
                 <Search className="text-slate-400 mr-3" size={20} />
                 <input 
                   type="text" 
-                  placeholder="Search students..." 
+                  placeholder="Search by name or skill..." 
                   value={searchTerm} 
                   onChange={e => setSearchTerm(e.target.value)}
                   className="bg-transparent text-white outline-none placeholder-slate-500 w-full md:w-64" 
@@ -521,7 +537,7 @@ export default function SkillSwap() {
   }
 
   if (page === 'request' && selectedUser) return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
+    <div className="min-h-screen bg-slate-950">
       <Nav />
       <div className="max-w-3xl mx-auto p-6">
         <button onClick={() => setPage('dashboard')} className="mb-6 text-blue-400 hover:text-blue-300 font-medium transition-colors flex items-center">
@@ -595,7 +611,7 @@ export default function SkillSwap() {
     const completed = sessions.filter(s => s.status === 'completed');
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
+      <div className="min-h-screen bg-slate-950">
         <Nav />
         <div className="max-w-7xl mx-auto p-6">
           <h2 className="text-4xl font-black text-white mb-8 flex items-center">
@@ -717,7 +733,7 @@ export default function SkillSwap() {
   }
 
   if (page === 'chat' && selectedSession) return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
+    <div className="min-h-screen bg-slate-950">
       <Nav />
       <div className="max-w-4xl mx-auto p-6">
         <button onClick={() => setPage('sessions')} className="mb-6 text-blue-400 hover:text-blue-300 font-medium transition-colors flex items-center">
@@ -767,7 +783,7 @@ export default function SkillSwap() {
   );
 
   if (page === 'rate' && selectedSession) return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
+    <div className="min-h-screen bg-slate-950">
       <Nav />
       <div className="max-w-3xl mx-auto p-6">
         <button onClick={() => setPage('sessions')} className="mb-6 text-blue-400 hover:text-blue-300 font-medium transition-colors flex items-center">
@@ -815,7 +831,7 @@ export default function SkillSwap() {
   );
 
   if (page === 'profile') return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950">
+    <div className="min-h-screen bg-slate-950">
       <Nav />
       <div className="max-w-4xl mx-auto p-6">
         <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-3xl border border-purple-500/30 shadow-2xl mb-6">
@@ -940,7 +956,7 @@ export default function SkillSwap() {
     );
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-red-950 to-slate-950">
+      <div className="min-h-screen bg-slate-950">
         <Nav />
         <div className="max-w-7xl mx-auto p-6">
           <div className="mb-8">
