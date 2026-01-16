@@ -33,8 +33,8 @@ const loadUserData = async () => {
   };import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy, Timestamp } from 'firebase/firestore';
-import { Calendar, User, Award, MessageCircle, Users, Shield, LogOut, Search, Star, Clock, CheckCircle, Home, Zap, Sparkles, Trophy, Target, Plus, Send, X, Trash2, UserX, UserCheck, ChevronDown } from 'lucide-react';
+import { getFirestore, collection, addDoc, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot, Timestamp } from 'firebase/firestore';
+import { Calendar, User, Award, MessageCircle, Users, Shield, LogOut, Search, Star, Clock, CheckCircle, Home, Zap, Sparkles, Trophy, Target, Plus, Send, X, Trash2, UserX, UserCheck, ChevronDown, Bell, Settings } from 'lucide-react';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAhPSxvy-XQMcZp9BZQ1vmjJE-sFsTCHdA",
@@ -126,6 +126,22 @@ export default function SkillSwap() {
   useEffect(() => {
     if (user && userProfile) loadUserData();
   }, [user, userProfile, page]);
+
+  useEffect(() => {
+    if (page === 'chat' && selectedSession) {
+      const q = query(
+        collection(db, 'messages'),
+        where('sessionId', '==', selectedSession.id),
+        orderBy('createdAt', 'asc')
+      );
+      
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        setMessages(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      });
+
+      return () => unsubscribe();
+    }
+  }, [page, selectedSession]);
 
   useEffect(() => {
     if (user && (page === 'dashboard' || page === 'sessions' || page === 'notifications')) {
@@ -268,6 +284,12 @@ export default function SkillSwap() {
 
   const requestSession = async () => {
     if (!selectedUser || !sessionSkill || !sessionDate || !sessionTime) return alert('Fill all fields!');
+    
+    const selectedDateTime = new Date(`${sessionDate}T${sessionTime}`);
+    if (selectedDateTime < new Date()) {
+      return alert('❌ Error: You cannot schedule a session in the past.');
+    }
+
     await addDoc(collection(db, 'sessions'), {
       requesterId: user.uid, requesterName: userProfile.name,
       providerId: selectedUser.id, providerName: selectedUser.name,
@@ -503,6 +525,21 @@ export default function SkillSwap() {
                 }`}
               >
                 <User size={18} /><span>Profile</span>
+              </button>
+
+              {/*Notification and Settings Buttons*/}
+              <button 
+                onClick={() => setPage('notifications')} 
+                className={`p-2 rounded-xl relative ${page === 'notifications' ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
+                <Bell size={20} />
+                {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">{unreadCount}</span>}
+              </button>
+              <button 
+                onClick={() => setPage('settings')} 
+                className={`p-2 rounded-xl ${page === 'settings' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
+                <Settings size={20} />
               </button>
             </div>
           )}
@@ -1171,6 +1208,24 @@ export default function SkillSwap() {
           >
             Save Profile ✅
           </button>
+        </div>
+
+        {/*Reviews Display Section*/}
+        <div className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-3xl border border-yellow-500/30 shadow-2xl mt-6">
+          <h3 className="text-2xl font-bold text-white mb-6 flex items-center">
+            <Star className="mr-3 text-yellow-400" size={24} /> Received Reviews
+          </h3>
+          <div className="space-y-4">
+            {sessions.filter(s => s.status === 'completed' && (s.providerId === user.uid || s.requesterId === user.uid)).map(s => (
+              <div key={s.id} className="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+                <div className="flex text-yellow-500 mb-2">
+                  <Star size={16} fill="currentColor" />
+                  <span className="ml-2 text-white font-bold">Session: {s.skill}</span>
+                </div>
+                <p className="text-slate-400 italic text-sm">Feedback will appear here once rating is submitted.</p>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">
